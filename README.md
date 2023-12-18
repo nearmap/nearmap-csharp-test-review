@@ -4,13 +4,13 @@ Instructions for the standard Nearmap C# test are provided below.
 
 For this exercise, a full solution has been provided (there is no need to provide any code yourself). However, we would
 like you to review the code so that we can have an in-depth technical discussion around the solution and how it can be
-improved. The solution code in marked by `#region Solution Code` directives. All code outside of a region is part of the
+improved. The solution code is marked by `#region Solution Code` directives. All code outside of a region is part of the
 initial problem statement.
 
 ## Nearmap C# Test
 
-The purpose of this assignment is to test your familiarity with C#,
-distributed systems concepts, performance benchmarking and TDD.
+The purpose of this assignment is to test your familiarity with C#, distributed systems concepts, performance
+benchmarking and TDD.
 
 ### Background
 
