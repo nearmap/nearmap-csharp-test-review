@@ -1,68 +1,82 @@
 ﻿#region Solution code
+
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.Collections.Concurrent;
 using System.Runtime.Caching;
 
 namespace NMTest.DataSource
 {
-    //I have introduced a local cache to improve performance for frequently requested items.
+    /// <summary>
+    /// Previous comment states:
+    /// "I have introduced a local cache to improve performance for frequently requested items."
+    /// 
+    /// It'd be better to have an actual description of what this class is doing, instead of outlining the most(?)
+    /// recent change. 
+    /// </summary>
     public class CachingDataSource : IDataSource
     {
-        private DatabaseStore database = new DatabaseStore();
-        private DistributedCacheStore distributedCache = new DistributedCacheStore();
-        private ObjectCache localCache = MemoryCache.Default;
+        private readonly IReadableDatabase _readableDatabase;
+        private readonly IDistributedCacheStore distributedCache;
+        private readonly ObjectCache localCache;
+        private static readonly ConcurrentDictionary<string, object> keyLocks = new ConcurrentDictionary<string, object>();
 
         public CachingDataSource(
-            DatabaseStore databaseStore,
-            DistributedCacheStore distributedCacheStore,
+            IReadableDatabase readableDatabase,
+            IDistributedCacheStore distributedCacheStore,
             ObjectCache objectCache)
         {
-            database = databaseStore;
+            _readableDatabase = readableDatabase;
             distributedCache = distributedCacheStore;
             localCache = objectCache;
+        }
+
+        private static object GetValueOrNull(object value)
+        {
+            return value.ToString() == DatabaseStore.NotFoundInDatabase ? null : value;
         }
         
         public object GetValue(string key)
         {
-            object value;
-
-            //Attempt to get the value from the local cache first
-            value = localCache.Get(key);
-
-            if (value == null)
+            //
+            // We want to be locking the read access to the whole Local Cache -> Distributed Cache -> DB 
+            // chain on per-key basis, and we do want to avoid locking the whole thing for every operation,
+            // thus creating a bottleneck in the multi-threaded system.
+            //
+            // Thus, when there are 100s of threads simultaneously asking for the coordinates of Wooloomooloo
+            // (because the marketing department, in their infinite wisdom, decided to provide free access to
+            // high-res aerial photography of the suburb as a part of the most recent promo, and naturally,
+            // people are keen to see what's in their neighbours backyards, flocking to the website, all hitting
+            // same the endpoint with the same params.
+            //
+            // So when that happens, we don't want to dispatch all those same requests to the LC->DC->DB chain, but
+            // but we do want to make them wait, on the per key basis, for the very first lucky request that managed
+            // to travel there and bring back the good news, i.e. the value
+            //
+            var keyLock = keyLocks.GetOrAdd(key, (_) => new object());
+            lock (keyLock)
             {
-                //Attempt to get the value from distributed cache
+                var value = localCache.Get(key);
+
+                if (value != null)
+                    return GetValueOrNull(value);
+                
+                Console.WriteLine($"{Environment.CurrentManagedThreadId}: {key} not in local cache");
+                
                 value = distributedCache.GetValue(key);
 
                 if (value == null)
                 {
-                    //Attempt to get the value from the database
-                    value = database.GetValue(key);
-
-                    //Populate the distributed cache with the value
+                    Console.WriteLine($"{Environment.CurrentManagedThreadId}: {key} not in distributed cache");
+                    // Not all nulls are created equal - we want to record the fact that value was not found in the DB,
+                    // so we never have to traverse the long LC->DC->DB chain ever again
+                    value = _readableDatabase.GetValue(key) ?? DatabaseStore.NotFoundInDatabase;
                     distributedCache.StoreValue(key, value);
                 }
 
-                //Populate the local cache with the value so long as the value isn't NULL
-                if (value != null)
-                {
-                    localCache.Set(new CacheItem(key, value), new CacheItemPolicy() { SlidingExpiration = new TimeSpan(1, 0, 0) });
-                }
+                localCache.Set(new CacheItem(key, value), new CacheItemPolicy());
+
+                return GetValueOrNull(value);
             }
-
-            return value;
-        }
-
-        //Store new values in the database, distributed cache and local cache.
-        public void StoreValue(string key, string value)
-        {
-            database.StoreValue(key, value);
-
-            distributedCache.StoreValue(key, value);
-            
-            localCache.Set(new CacheItem(key, value), new CacheItemPolicy() { SlidingExpiration = new TimeSpan(1, 0, 0) });
         }
     }
 }

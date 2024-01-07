@@ -3,7 +3,7 @@ using System.Threading;
 
 namespace NMTest.DataSource
 {
-    public class DistributedCacheStore
+    public class DistributedCacheStore: IDistributedCacheStore
     {
         private readonly Dictionary<string, object> _values = new Dictionary<string, object>();
         
@@ -11,12 +11,7 @@ namespace NMTest.DataSource
         {
             //simulates 100 ms roundtrip to the distributed cache
             Thread.Sleep(100);
-            object value;
-            if (_values.TryGetValue(key, out value))
-            {
-                return value;
-            }
-            return null;
+            return _values.TryGetValue(key, out var value) ? value : null;
         }
 
         public void StoreValue(string key, object value)
