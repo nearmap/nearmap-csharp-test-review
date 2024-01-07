@@ -7,11 +7,9 @@ using System.Runtime.Caching;
 namespace NMTest.DataSource
 {
     /// <summary>
-    /// Previous comment states:
-    /// "I have introduced a local cache to improve performance for frequently requested items."
-    /// 
-    /// It'd be better to have an actual description of what this class is doing, instead of outlining the most(?)
-    /// recent change. 
+    /// Retrieves requested value from local cache, if not available, tries to retrieve from Distributed Cache,
+    /// then the database. Once obtained or if failed to do so, caches the result for the duration of app domain
+    /// lifetime. Thread-Safe. 
     /// </summary>
     public class CachingDataSource : IDataSource
     {
@@ -60,13 +58,10 @@ namespace NMTest.DataSource
                 if (value != null)
                     return GetValueOrNull(value);
                 
-                Console.WriteLine($"{Environment.CurrentManagedThreadId}: {key} not in local cache");
-                
                 value = distributedCache.GetValue(key);
 
                 if (value == null)
                 {
-                    Console.WriteLine($"{Environment.CurrentManagedThreadId}: {key} not in distributed cache");
                     // Not all nulls are created equal - we want to record the fact that value was not found in the DB,
                     // so we never have to traverse the long LC->DC->DB chain ever again
                     value = _readableDatabase.GetValue(key) ?? DatabaseStore.NotFoundInDatabase;

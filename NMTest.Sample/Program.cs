@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.Caching;
-using System.Threading;
 using System.Threading.Tasks;
 
 #region Solution code
