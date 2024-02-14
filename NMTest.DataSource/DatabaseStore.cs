@@ -3,7 +3,7 @@ using System.Threading;
 
 namespace NMTest.DataSource
 {
-    public class DatabaseStore
+    public class DatabaseStore : IDatabaseStore
     {
         private readonly Dictionary<string, object> _values = new Dictionary<string, object>();
 
@@ -11,12 +11,7 @@ namespace NMTest.DataSource
         {
             //simulates 500 ms roundtrip to the database
             Thread.Sleep(500);
-            object value;
-            if (_values.TryGetValue(key, out value))
-            {
-                return value;
-            }
-            return null;
+            return _values.TryGetValue(key, out object value) ? value : null;
         }
 
         public void StoreValue(string key, object value)

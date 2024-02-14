@@ -1,7 +1,6 @@
-﻿#region Solution Code
-using System;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NMTest.DataSource;
+using System;
 using System.Runtime.Caching;
 
 namespace NMTest.Test;
@@ -9,226 +8,194 @@ namespace NMTest.Test;
 [TestClass]
 public class CacheTests
 {
-    [TestMethod]
-    public void NullKey_Read()
+    private const string testKey = "testKey";
+    private const string testValue = "testValue";
+    IDatabaseStore database;
+    IDistributedCacheStore distributedCache;
+    ObjectCache localCache;
+    IDataSource dataSource;
+
+    [TestInitialize]
+    public void Test_Initialize()
     {
-        string testKey = "testKey";
+        database = new DatabaseStore();
+        distributedCache = new DistributedCacheStore();
+        // issue: MemoryCache.Default is effectively a singleton that persists across tests and contaminates them
+        // - https://learn.microsoft.com/en-us/dotnet/api/system.runtime.caching.memorycache.default
+        // fix: isolate each test with a dedicated instance of MemoryCache and dispose of it upon test completion
+        localCache = new MemoryCache(name: $"{Guid.NewGuid()}");
+        dataSource = new CachingDataSource(database, distributedCache, localCache);
+    }
 
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-        
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
+    [TestCleanup]
+    public void Test_Cleanup()
+    {
+        database = null;
+        distributedCache = null;
+        (localCache as MemoryCache)?.Dispose();
+        localCache = null;
+        dataSource = null;
+    }
 
-        object result = ds.GetValue(testKey);
+
+    /// <summary>
+    /// extend: additional data driven tests for null argument exceptions for null dependencies when creating CachingDataSource
+    /// </summary>
+    /// <param name="databaseStoreIsNull"></param>
+    /// <param name="distributedCacheStoreIsNull"></param>
+    /// <param name="objectCacheIsNull"></param>
+    [TestMethod]
+    [DataRow(false, true, true)]
+    [DataRow(true, false, true)]
+    [DataRow(true, true, false)]
+    [DataRow(false, false, true)]
+    [DataRow(false, true, false)]
+    [DataRow(true, false, false)]
+    [ExpectedException(typeof(ArgumentNullException), "CachingDataSource store dependency cannot be null")]
+    public void NullDependency_CachingDataSource(
+        bool databaseStoreIsNull,
+        bool distributedCacheStoreIsNull,
+        bool objectCacheIsNull)
+    {
+        IDatabaseStore databaseStore = databaseStoreIsNull ? null : database;
+        IDistributedCacheStore distributedCacheStore = distributedCacheStoreIsNull ? null : distributedCache;
+        ObjectCache objectCache = objectCacheIsNull ? null : localCache;
+
+        new CachingDataSource(databaseStore, distributedCacheStore, objectCache);
+    }
+
+    /// <summary>
+    /// Check that a null or empty key returns a null result
+    /// </summary>
+    /// <param name="key"></param>
+    [TestMethod]
+    [DataRow(null)]
+    [DataRow("")]
+    public void NullKey_Read(string key)
+    {
+        object result = dataSource.GetValue(key);
 
         Assert.IsNull(result);
     }
 
-    //Check that a read from the database can be performed if the local cache and distributed cache don't have the given key.
+    /// <summary>
+    /// Check that a read with a key that does not exist in the store returns a null result
+    /// </summary>
+    [TestMethod]
+    public void UnmatchedKey_Read()
+    {
+        object result = dataSource.GetValue(testKey);
+
+        Assert.IsNull(result);
+    }
+
+    /// <summary>
+    /// Check that a read from the database can be performed if the local cache and distributed cache don't have the given key.
+    /// </summary>
     [TestMethod]
     public void DatabaseKey_Read()
     {
-        string testKey = "testKey";
-        string testValue = "testValue";
+        database.StoreValue(testKey, testValue);
 
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
-        db.StoreValue(testKey, testValue);
-
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        string result = ds.GetValue(testKey).ToString();
+        string result = dataSource.GetValue(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 
-    //Check that an empty distributed cache key is populated by the database value when a read occurs.
+    /// <summary>
+    /// Check that an empty distributed cache key is populated by the database value when a read occurs.
+    /// </summary>
     [TestMethod]
     public void DatabaseKey_DistributedCache_Read()
     {
-        string testKey = "testKey1";
-        string testValue = "testValue";
+        database.StoreValue(testKey, testValue);
 
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
-        db.StoreValue(testKey, testValue);
-
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        ds.GetValue(testKey).ToString();
+        dataSource.GetValue(testKey).ToString();
 
         string result = distributedCache.GetValue(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 
-    //Check that an empty local cache key is populated by the database value when a read occurs.
+    /// <summary>
+    /// Check that an empty local cache key is populated by the database value when a read occurs.
+    /// </summary>
     [TestMethod]
     public void DatabaseKey_LocalCache_Read()
     {
-        string testKey = "testKey";
-        string testValue = "testValue";
+        database.StoreValue(testKey, testValue);
 
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
-        db.StoreValue(testKey, testValue);
-
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        ds.GetValue(testKey).ToString();
+        dataSource.GetValue(testKey).ToString();
 
         string result = localCache.Get(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 
-    //Check that a read from the distributed cache can be performed if the local cache and database don't have the given key.
+    /// <summary>
+    /// Check that a read from the distributed cache can be performed if the local cache and database don't have the given key.
+    /// </summary>
     [TestMethod]
     public void DistributeCachedKey_Read()
     {
-        string testKey = "testKey";
-        string testValue = "testValue";
-
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
         distributedCache.StoreValue(testKey, testValue);
 
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        string result = ds.GetValue(testKey).ToString();
+        string result = dataSource.GetValue(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 
-    //Check that an empty local cache key is populated by the database value when a read occurs.
+    /// <summary>
+    /// Check that an empty local cache key is populated by the database value when a read occurs.
+    /// </summary>
     [TestMethod]
     public void DistributeCachedKey_LocalCache_Read()
     {
-        string testKey = "testKey";
-        string testValue = "testValue";
-
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
         distributedCache.StoreValue(testKey, testValue);
 
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        ds.GetValue(testKey).ToString();
+        dataSource.GetValue(testKey).ToString();
 
         string result = localCache.Get(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 
-    //Check that a read from the distributed cache can be performed if the local cache and database don't have the given key.
+    /// <summary>
+    /// Check that a read from the distributed cache can be performed if the local cache and database don't have the given key.
+    /// </summary>
     [TestMethod]
     public void LocalCacheKey_Read()
     {
-        string testKey = "testKey";
-        string testValue = "testValue";
+        localCache.Set(new CacheItem(testKey, testValue), new CacheItemPolicy() { SlidingExpiration = TimeSpan.FromHours(1) });
 
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
-        localCache.Set(new CacheItem(testKey, testValue), new CacheItemPolicy() { SlidingExpiration = new TimeSpan(1, 0, 0) });
-
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        string result = ds.GetValue(testKey).ToString();
+        string result = dataSource.GetValue(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 
-    //Check that a datasource write correctly populates the local cache.
-    [TestMethod]
-    public void LocalCacheKey_Write()
-    {
-        string testKey = "testKey";
-        string testValue = "testValue";
-
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-        
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        ds.StoreValue(testKey, testValue);
-
-        string result = localCache.Get(testKey).ToString();
-
-        Assert.AreEqual(testValue, result);
-    }
-
-    //Check that a datasource write correctly populates the distributed cache.
+    /// <summary>
+    /// Check that a distributed cache write correctly populates the distributed cache.
+    /// </summary>
     [TestMethod]
     public void DistributedCacheKey_Write()
     {
-        string testKey = "testKey";
-        string testValue = "testValue";
-
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        ds.StoreValue(testKey, testValue);
+        distributedCache.StoreValue(testKey, testValue);
 
         string result = distributedCache.GetValue(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 
-    //Check that a datasource write correctly populates the database.
+    /// <summary>
+    /// Check that a database write correctly populates the database.
+    /// </summary>
     [TestMethod]
     public void DatabaseKey_Write()
     {
-        string testKey = "testKey";
-        string testValue = "testValue";
+        database.StoreValue(testKey, testValue);
 
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        ds.StoreValue(testKey, testValue);
-
-        string result = db.GetValue(testKey).ToString();
-
-        Assert.AreEqual(testValue, result);
-    }
-
-    //Check that a datasource write and read have matching values.
-    [TestMethod]
-    public void DataSourceKey_ReadWrite()
-    {
-        string testKey = "testKey";
-        string testValue = "testValue";
-
-        DatabaseStore db = new DatabaseStore();
-        DistributedCacheStore distributedCache = new DistributedCacheStore();
-        ObjectCache localCache = MemoryCache.Default;
-
-        CachingDataSource ds = new CachingDataSource(db, distributedCache, localCache);
-
-        ds.StoreValue(testKey, testValue);
-
-        string result = ds.GetValue(testKey).ToString();
+        string result = database.GetValue(testKey).ToString();
 
         Assert.AreEqual(testValue, result);
     }
 }
-#endregion
