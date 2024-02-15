@@ -1,11 +1,11 @@
-﻿using System.Collections.Generic;
+﻿using System.Collections.Concurrent;
 using System.Threading;
 
 namespace NMTest.DataSource
 {
     public class DistributedCacheStore : IDistributedCacheStore
     {
-        private readonly Dictionary<string, object> _values = new Dictionary<string, object>();
+        private readonly ConcurrentDictionary<string, object> _values = new ConcurrentDictionary<string, object>();
 
         public object GetValue(string key)
         {
